@@ -13,28 +13,71 @@ app.use(bodyParser.json()); // Parse JSON requests
 // 1. Register a new user
 app.post('/register', (req, res) => {
   const { username, password, email } = req.body;
-  const sql = `INSERT INTO users (username, password, email) VALUES (?, ?, ?)`;
   
-  db.run(sql, [username, password, email], function(err) {
+  // Basic input validation
+  if (!username || !password || !email) {
+    const errorMsg = 'Please fill all fields';
+    return res.status(400).json({ error: errorMsg });
+  }
+  
+  // Check if username already exists
+  db.get('SELECT id FROM users WHERE username = ?', [username], (err, user) => {
     if (err) {
-      return res.status(400).json({ error: err.message });
+      return res.status(500).json({ error: 'Server error. Please try again later.' });
     }
-    res.json({ id: this.lastID, username, email });
+    
+    if (user) {
+      const errorMsg = 'Username already exists';
+      return res.status(400).json({ error: errorMsg });
+    }
+    
+    // Check if email already exists
+    db.get('SELECT id FROM users WHERE email = ?', [email], (err, emailUser) => {
+      if (err) {
+        return res.status(500).json({ error: 'Server error. Please try again later.' });
+      }
+      
+      if (emailUser) {
+        const errorMsg = 'Email already registered';
+        return res.status(400).json({ error: errorMsg });
+      }
+      
+      // If all validations pass, insert the new user
+      const sql = `INSERT INTO users (username, password, email) VALUES (?, ?, ?)`;
+      
+      db.run(sql, [username, password, email], function(err) {
+        if (err) {
+          return res.status(500).json({ error: 'Registration failed. Please try again later.' });
+        }
+        
+        // Create response data
+        const responseData = { id: this.lastID, username, email };
+        res.json(responseData);
+      });
+    });
   });
 });
 
 // 2. Login user
 app.post('/login', (req, res) => {
   const { username, password } = req.body;
+  
+  // Input validation
+  if (!username || !password) {
+    const errorMsg = 'Please enter username and password';
+    return res.status(400).json({ error: errorMsg });
+  }
+  
   const sql = `SELECT id, username, email FROM users WHERE username = ? AND password = ?`;
   
   db.get(sql, [username, password], (err, user) => {
     if (err) {
-      return res.status(400).json({ error: err.message });
+      return res.status(500).json({ error: 'Server error. Please try again.' });
     }
     if (!user) {
       return res.status(401).json({ error: 'Invalid username or password' });
     }
+    
     res.json(user);
   });
 });
@@ -137,6 +180,12 @@ app.delete('/user/:id', (req, res) => {
     });
   });
 });
+
+// Helper function to validate email format
+function isValidEmail(email) {
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return emailRegex.test(email);
+}
 
 // Start server
 app.listen(PORT, () => {
