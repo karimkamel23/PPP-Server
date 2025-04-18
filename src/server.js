@@ -2,9 +2,14 @@ const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const db = require('./database');
+const bcrypt = require('bcrypt');
+const https = require('https');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 const PORT = 3000;
+const HTTPS_PORT = 443;
 
 // Middleware
 app.use(cors()); // Allow Unity to access API
@@ -20,39 +25,46 @@ app.post('/register', (req, res) => {
     return res.status(400).json({ error: errorMsg });
   }
   
-  // Check if username already exists
-  db.get('SELECT id FROM users WHERE username = ?', [username], (err, user) => {
-    if (err) {
+  // Hash the password
+  bcrypt.hash(password, 10, (hashErr, hashedPassword) => {
+    if (hashErr) {
       return res.status(500).json({ error: 'Server error. Please try again later.' });
     }
     
-    if (user) {
-      const errorMsg = 'Username already exists';
-      return res.status(400).json({ error: errorMsg });
-    }
-    
-    // Check if email already exists
-    db.get('SELECT id FROM users WHERE email = ?', [email], (err, emailUser) => {
+    // Check if username already exists
+    db.get('SELECT id FROM users WHERE username = ?', [username], (err, user) => {
       if (err) {
         return res.status(500).json({ error: 'Server error. Please try again later.' });
       }
       
-      if (emailUser) {
-        const errorMsg = 'Email already registered';
+      if (user) {
+        const errorMsg = 'Username already exists';
         return res.status(400).json({ error: errorMsg });
       }
       
-      // If all validations pass, insert the new user
-      const sql = `INSERT INTO users (username, password, email) VALUES (?, ?, ?)`;
-      
-      db.run(sql, [username, password, email], function(err) {
+      // Check if email already exists
+      db.get('SELECT id FROM users WHERE email = ?', [email], (err, emailUser) => {
         if (err) {
-          return res.status(500).json({ error: 'Registration failed. Please try again later.' });
+          return res.status(500).json({ error: 'Server error. Please try again later.' });
         }
         
-        // Create response data
-        const responseData = { id: this.lastID, username, email };
-        res.json(responseData);
+        if (emailUser) {
+          const errorMsg = 'Email already registered';
+          return res.status(400).json({ error: errorMsg });
+        }
+        
+        // If all validations pass, insert the new user with hashed password
+        const sql = `INSERT INTO users (username, password, email) VALUES (?, ?, ?)`;
+        
+        db.run(sql, [username, hashedPassword, email], function(err) {
+          if (err) {
+            return res.status(500).json({ error: 'Registration failed. Please try again later.' });
+          }
+          
+          // Create response data
+          const responseData = { id: this.lastID, username, email };
+          res.json(responseData);
+        });
       });
     });
   });
@@ -68,17 +80,37 @@ app.post('/login', (req, res) => {
     return res.status(400).json({ error: errorMsg });
   }
   
-  const sql = `SELECT id, username, email FROM users WHERE username = ? AND password = ?`;
+  // Get user with hashed password
+  const sql = `SELECT id, username, email, password FROM users WHERE username = ?`;
   
-  db.get(sql, [username, password], (err, user) => {
+  db.get(sql, [username], (err, user) => {
     if (err) {
       return res.status(500).json({ error: 'Server error. Please try again.' });
     }
+    
     if (!user) {
       return res.status(401).json({ error: 'Invalid username or password' });
     }
     
-    res.json(user);
+    // Compare submitted password with stored hash
+    bcrypt.compare(password, user.password, (compareErr, isMatch) => {
+      if (compareErr) {
+        return res.status(500).json({ error: 'Server error. Please try again.' });
+      }
+      
+      if (!isMatch) {
+        return res.status(401).json({ error: 'Invalid username or password' });
+      }
+      
+      // Password matches - send user data without password
+      const userData = {
+        id: user.id,
+        username: user.username,
+        email: user.email
+      };
+      
+      res.json(userData);
+    });
   });
 });
 
@@ -187,7 +219,39 @@ function isValidEmail(email) {
   return emailRegex.test(email);
 }
 
-// Start server
+// HTTPS Setup for localhost
+try {
+  // Path to the certificate files (expects them to be in a 'certs' folder in the project root)
+  const certPath = path.join(__dirname, '..', 'certs');
+  
+  // Check if certificate files exist
+  const certFiles = {
+    key: path.join(certPath, 'localhost-key.pem'),
+    cert: path.join(certPath, 'localhost.pem')
+  };
+  
+  if (fs.existsSync(certFiles.key) && fs.existsSync(certFiles.cert)) {
+    const httpsOptions = {
+      key: fs.readFileSync(certFiles.key),
+      cert: fs.readFileSync(certFiles.cert)
+    };
+    
+    // Create HTTPS server
+    https.createServer(httpsOptions, app).listen(HTTPS_PORT, () => {
+      console.log(`HTTPS server running on https://localhost:${HTTPS_PORT}`);
+    });
+    
+    console.log('HTTPS server started successfully');
+  } else {
+    console.log('SSL certificate files not found. Starting HTTP server only.');
+    console.log(`Expected certificate files at: ${certPath}`);
+    console.log('Generate certificates using mkcert (run: mkcert localhost)');
+  }
+} catch (error) {
+  console.error('Error starting HTTPS server:', error.message);
+}
+
+// Start HTTP server (for backward compatibility)
 app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`HTTP server running on http://localhost:${PORT}`);
 }); 
