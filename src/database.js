@@ -1,7 +1,11 @@
 const sqlite3 = require('sqlite3').verbose();
+const path = require('path');
+
+// Use absolute path for database file
+const dbPath = path.join(__dirname, '..', 'data', 'gamedb.db');
 
 // Connect to SQLite database
-const db = new sqlite3.Database('./data/gamedb.db', (err) => {
+const db = new sqlite3.Database(dbPath, (err) => {
   if (err) {
     console.error('Error opening database:', err.message);
   } else {
@@ -15,7 +19,7 @@ const db = new sqlite3.Database('./data/gamedb.db', (err) => {
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           username TEXT UNIQUE NOT NULL,
           password TEXT NOT NULL,
-          email TEXT UNIQUE,
+          email TEXT UNIQUE
         )
       `);
 
